@@ -68,6 +68,16 @@ def train(args):
     ner_type = args.model_params.get("ner_configs").get("ner_type").upper() + "-CRF"
     model_save_path = os.path.abspath(
         os.path.join(args.save_path, "%s-%s-%s.h5" % (bert_type, clf_type, ner_type)))
+
+    """
+    先进行实体NER任务，当val_crf_accuracy达到阈值 all_train_threshold 时，NER任务结束，开始全量任务训练
+    *   `all_train_threshold`表示序列标注任务的验证精度达到该值时，同时训练分类任务和序列标注任务：
+
+    *   该值过小将导致序列标注任务无法收敛，而分类任务易过拟合；
+    *   该值过大将导致分类任务欠拟合；
+    *   建议取值在0.9~0.98之间
+
+    """
     # 训练较难任务
     model.hard_train_model.compile(
         optimizer=keras.optimizers.Adam(lr=args.model_params.get("lr"), beta_1=0.9, beta_2=0.999, epsilon=1e-8),

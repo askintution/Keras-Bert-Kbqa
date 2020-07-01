@@ -104,6 +104,8 @@ class KbqaModel:
         x_in = Input(shape=(self.max_len,), name="Origin-Input-Token")
         s_in = Input(shape=(self.max_len,), name="Origin-Input-Segment")
         x = self.bert_model([x_in, s_in])
+
+        # 第一个CLS位置的为分类结果，第二个往后的是NER的序列标注结果
         clf_x = Lambda(lambda X: X[:, 0], name="Clf-Embedding")(x)
         ner_x = Lambda(lambda X: X[:, 1:], name="Ner-Embedding")(x)
 
@@ -120,9 +122,15 @@ class KbqaModel:
         clf_acc = keras.metrics.categorical_accuracy(clf_true, clf_o)
         ner_loss = CrfLoss(self.tag_to_id, self.tag_padding).crf_loss(ner_true, ner_o)
         ner_acc = CrfAcc(self.tag_to_id, self.tag_padding).crf_accuracy(ner_true, ner_o)
+
+        """
+        clf和ner的true label以及predict label
+        """
         train_o = MultiLossLayer(self.tag_to_id, self.tag_padding)([clf_true, ner_true, clf_o, ner_o])
-        # 较难任务训练模型
+
+        # 较难任务训练模型,NER任务
         self.hard_train_model = Model([x_in, s_in], ner_o)
+
         # 全训练模型
         self.full_train_model = Model([x_in, s_in, clf_true, ner_true], train_o)
         self.full_train_model.add_metric(clf_loss, name="clf_loss")
@@ -130,7 +138,8 @@ class KbqaModel:
         self.full_train_model.add_metric(ner_loss, name="ner_loss")
         self.full_train_model.add_metric(ner_acc, name="ner_acc")
         self.full_train_model.train_all_tasks = self.train_all_tasks
-        # 预测模型
+
+        # 预测模型，输出的是NER和分类CLF
         self.pred_model = Model([x_in, s_in], [clf_o, ner_o])
         
     def clf(self, clf_x):
@@ -172,7 +181,7 @@ class KbqaModel:
         return clf_o
     
     def ner(self, ner_x, clf_o):
-        """序列标注任务模型，需要添加clf_o的先验信息
+        """序列标注任务模型，需要添加clf_o的先验信息，clf_o是关系分类结果
         给了Idcnn和Bilstm两类样例
         """
         # 配置解析
@@ -255,6 +264,12 @@ class MultiLossLayer(Layer):
                 self.add_weight(name="log_var" + str(i), shape=(1,), initializer=Constant(0.), trainable=False)]
         super(MultiLossLayer, self).build(input_shape)
 
+    """
+    本来是将分类loss和序列标注loss一起合并的，也就是
+    K.sum( loss_func(y_true,y_pred))
+
+    而现在这里进行 K.sum(K.exp(-log_var[0]) * loss_func(y_true, y_pred) + log_var[0], -1),进行log_vars参数学习
+    """
     def multi_loss(self, ys_true, ys_pred):
         loss = 0
         for y_true, y_pred, loss_func, log_var in zip(ys_true, ys_pred, self.loss_funcs, self.log_vars):
